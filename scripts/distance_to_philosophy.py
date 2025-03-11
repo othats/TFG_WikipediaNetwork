@@ -34,7 +34,7 @@ def parse_network(filename, article_dict):
 
     with open(filename, 'r', encoding="utf-8") as f:
         
-        line = f.readline() # first line is useless  
+        header = f.readline() # first line is useless  
 
         while True:
             line = f.readline()
@@ -91,31 +91,38 @@ def bfs(start_article, nodes, edges, article_dict):
     unvisited.discard(start_idx)
 
     distance = 0
-    while boundary:
-        frontier = deque()
-        for node in boundary:
-            print(f"FINAL {article_dict.idx_to_article[node]}\t{distance}")
-            
-            visited.add(node)
-            unvisited.discard(node)
+    with open(output_file, "w", encoding="utf-8") as outfile:
 
-            for neighbor in edges.get(node, []):
-                if neighbor in unvisited:
-                    frontier.append(neighbor)
+        # header
+        outfile.write("article, distance\n")
+        
+        while boundary:
+            frontier = deque()
+            for node in boundary:
+                outfile.write(f"{article_dict.idx_to_article[node]}, {distance}\n")
+                
+                visited.add(node)
+                unvisited.discard(node)
+
+                for neighbor in edges.get(node, []):
+                    if neighbor in unvisited:
+                        frontier.append(neighbor)
 
             #sys.stderr.write(f"distance={distance} frontier size={len(frontier)} visited={len(visited)} unvisited={len(unvisited)}\n")
             distance += 1
             boundary = frontier
+    print(f"Number of unvisited articles: {len(unvisited)}")
 
 # ----- Main function -----
 
 
 start_article = "Filosofia"
-csv_file = "output/network.csv"
+input_file = "output/network.csv"
+output_file = "output/distances.txt"
 
 article_dict = ArticleDictionary()
 print("\nConverting to dictionary: ")
-nodes, edges = parse_network(csv_file, article_dict)
+nodes, edges = parse_network(input_file, article_dict)
 
-print("\nPerforming BFS: \n")
+print("\nPerforming BFS: ")
 bfs(start_article, nodes, edges, article_dict)
