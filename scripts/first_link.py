@@ -135,7 +135,8 @@ def process_page(xml_line):
 
 
 input_file = "input/ptwiki-latest-pages-articles.pageperline.xml"
-output_file = "output/network.csv"
+nodes_file = "output/pages.csv"
+edges_file = "output/edges.csv"
 error_file = "output/errors.log"
 
 err_out = open(error_file, "w", encoding="utf-8")
@@ -144,11 +145,18 @@ sys.stderr = err_out
 total_size = os.path.getsize(input_file)
 last_percent = 0
 
+# Dictionary to assign ID to each visited page
+node_mapping = {}
+current_id = 0
+
 try:
-    with open(input_file, "r", encoding="utf-8") as infile, open(output_file, "w", encoding="utf-8") as outfile:
+    with open(input_file, "r", encoding="utf-8") as infile, \
+         open(nodes_file, "w", encoding="utf-8") as nodes_out, \
+         open(edges_file, "w", encoding="utf-8") as edges_out:
         
-        # add header to csv
-        outfile.write("source, target\n")
+        # add header to csv's
+        nodes_out.write("id,page\n")
+        edges_out.write("source,target\n")
 
         while True:
             line = infile.readline()
@@ -158,10 +166,28 @@ try:
             line = line.strip()
             if not line: 
                 continue
+
             result = process_page(line)
             if result:
-                if result != "SKIPPED_META" and result != "SKIPPED_DESAMB":
-                    outfile.write(result + "\n")
+                if result not in ("SKIPPED_META", "SKIPPED_DESAMB"):
+
+                    parts = result.split(", ")
+                    source, target = parts[0], parts[1]
+
+                    # new page
+                    if source not in node_mapping:
+                        node_mapping[source] = current_id
+                        nodes_out.write(f"{current_id},{source}\n")
+                        current_id += 1
+
+                    if target not in node_mapping:
+                        node_mapping[target] = current_id
+                        nodes_out.write(f"{current_id},{target}\n")
+                        current_id += 1
+
+                    edges_out.write(f"{node_mapping[source]},{node_mapping[target]}\n")
+            
+            
             else:
                 sys.stderr.write("Page without link: " +
                                     f"{line[13:40]}...\n")
