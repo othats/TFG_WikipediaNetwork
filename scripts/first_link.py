@@ -1,7 +1,19 @@
+# ----- Imports -----
+
 import re, sys, os
 import mwparserfromhell
+import random
 from bs4 import BeautifulStoneSoup
 import unicodedata
+
+# ----- Config -----
+
+input_file = "input/ptwiki-latest-pages-articles.pageperline.xml"
+nodes_file = "output/pages.csv"
+edges_first_file = "output/edges_first.csv"
+edges_second_file = "output/edges_second.csv"
+edges_random_file = "output/edges_random.csv"
+error_file = "output/errors.log"
 
 # ----- Helper Functions -----
 
@@ -52,10 +64,10 @@ def valid_link(link, title):
         return link  
 
 
-def extract_link(text, title):
+def extract_links(text, title):
     """
-    Parses wikitext to extract the first valid link
-    (first non-parenthesized, non-italicized link)
+    Parses wikitext to extract the first, second and random valid links
+    (non-parenthesized, non-italicized)
     """
     parsed = mwparserfromhell.parse(text)
 
@@ -68,6 +80,7 @@ def extract_link(text, title):
                 continue  # Skip this node entirely
         filtered_nodes.append(node)
     
+    links = []
     parenthesis_depth = 0
 
     for node in filtered_nodes:
@@ -82,25 +95,24 @@ def extract_link(text, title):
             node_str = str(node)
             if '(' in node_str or ')' in node_str:
                 diff = node_str.count('(') - node_str.count(')')
+                parenthesis_depth += diff
             # Si al procesar un nodo no-Text la profundidad es >0, se resetea para evitar bloqueos
             if parenthesis_depth > 0:
                 parenthesis_depth = 0
         
-        if parenthesis_depth > 0:
-            continue 
 
-        # finds first link
-        if isinstance(node, mwparserfromhell.nodes.Wikilink):
-            link_candidate = re.split(r'\||#', str(node.title))[0].strip()
-            valid = valid_link(link_candidate, title)
-            if valid:
-                return valid
-    return None
+        # finds links
+        elif isinstance(node, mwparserfromhell.nodes.Wikilink):
+            candidate = re.split(r'\||#', str(node.title))[0].strip()
+            valid = valid_link(candidate, title)
+            if valid and parenthesis_depth <= 0:
+                links.append(valid)
 
-def process_page(xml_line):
+    return links
+
+def process_page(xml_line, mode):
     """
-    Processes singles flattened XML page to extract its title and first valid link
-    Returns a string "title, link" if a valid link is found
+    Processes singles flattened XML page to extract its title and first, second and random valid link
     """
     soup = BeautifulStoneSoup(xml_line)
     title_tag = soup.find('title')
@@ -119,25 +131,26 @@ def process_page(xml_line):
     if ',' in title or "{{desambiguacao" in normalized_text:
         return "SKIPPED_DESAMB"
     
-    first_link = extract_link(text, title)
-    if first_link:
-        if meta_article(first_link):
-            return None
-        elif ',' in first_link:
-            return "SKIPPED_DESAMB"
-        else: 
-            return f"{title}, {first_link}"
-    else: 
+    links = extract_links(text, title)
+
+    if not links: 
         return None
+    
+    targets = {
+        "first": links[0],
+        "second": links[1] if len(links) > 1 else None,
+        "random": random.choice(links)
+    }
+
+    for key in targets: 
+        if targets[key]:
+            if meta_article(targets[key]) or ',' in targets[key]:
+                targets[key] = None
+
+    return title, targets 
 
 
-# ----- Main function -----
-
-
-input_file = "input/ptwiki-latest-pages-articles.pageperline.xml"
-nodes_file = "output/pages.csv"
-edges_file = "output/edges.csv"
-error_file = "output/errors.log"
+# ----- Main Execution -----
 
 err_out = open(error_file, "w", encoding="utf-8")
 sys.stderr = err_out
@@ -152,11 +165,15 @@ current_id = 0
 try:
     with open(input_file, "r", encoding="utf-8") as infile, \
          open(nodes_file, "w", encoding="utf-8") as nodes_out, \
-         open(edges_file, "w", encoding="utf-8") as edges_out:
+         open(edges_first_file, "w", encoding="utf-8") as edges_first_out, \
+         open(edges_second_file, "w", encoding="utf-8") as edges_second_out, \
+         open(edges_random_file, "w", encoding="utf-8") as edges_random_out:
         
         # add header to csv's
         nodes_out.write("id,page\n")
-        edges_out.write("source,target\n")
+        edges_first_out.write("source,target\n")
+        edges_second_out.write("source,target\n")
+        edges_random_out.write("source,target\n")
 
         while True:
             line = infile.readline()
@@ -171,22 +188,30 @@ try:
             if result:
                 if result not in ("SKIPPED_META", "SKIPPED_DESAMB"):
 
-                    parts = result.split(", ")
-                    source, target = parts[0], parts[1]
+                    title, targets = result
 
                     # new page
-                    if source not in node_mapping:
-                        node_mapping[source] = current_id
-                        nodes_out.write(f"{current_id},{source}\n")
+                    if title not in node_mapping:
+                        node_mapping[title] = current_id
+                        nodes_out.write(f"{current_id},{title}\n")
                         current_id += 1
 
-                    if target not in node_mapping:
-                        node_mapping[target] = current_id
-                        nodes_out.write(f"{current_id},{target}\n")
-                        current_id += 1
+                    for mode, target in targets.items():
+                        if target:
+                            if target not in node_mapping:
+                                node_mapping[target] = current_id
+                                nodes_out.write(f"{current_id},{target}\n")
+                                current_id += 1
 
-                    edges_out.write(f"{node_mapping[source]},{node_mapping[target]}\n")
-            
+                            source_id = node_mapping[title]
+                            target_id = node_mapping[target]
+
+                            if mode == "first":
+                                edges_first_out.write(f"{source_id},{target_id}\n")
+                            elif mode == "second":
+                                edges_second_out.write(f"{source_id},{target_id}\n")
+                            elif mode == "random":
+                                edges_random_out.write(f"{source_id},{target_id}\n")
             
             else:
                 sys.stderr.write("Page without link: " +
